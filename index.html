@@ -1,0 +1,1494 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<!--
+  사각바퀴×현수선 도로 시뮬레이터 — EduBridge A-17 Phygital
+  v0.5-mobile (2026-05-19)
+  
+  변경 이력:
+    v0.3    Phase 1-3 완성 (1541줄, MH 19/19 PASS)
+    v0.4    Phase 4 Level 2 도로 비교 모드 구현 (2088줄, MH 26/26 PASS)
+    v0.4.1  시각 피드백 반영: 그래프 스케일 강화, 디버그 위치 수정, 축 편차 시각 강조
+    v0.4.2  그래프 기준선 라벨 조건부 표시 (현수선 vs 대체 도로)
+    v0.5    Phase 5a: G/Z축 구문 안전성 + 43인치 터치 최적화 + 그래프 쓰로틀링
+    v0.5-mobile  세션 A: 모바일 변환 — 기능 제거(데모/DEV/MH패널/속도슬라이더) + DPR 보정
+    v0.5-mobile  세션 B: 2컬럼→세로 스택 레이아웃 + 컨트롤 바 1줄 압축 + 토글 바 아이콘 중심
+                        + 도로 비교 수평 탭 + 그래프 90px 접이식 + 교육 노트 폰트 조정
+-->
+<title>사각바퀴의 비밀 — EduBridge A-17 모바일</title>
+<style>
+/* ── EduBridge 팔레트 ── */
+:root {
+    --navy: #0B1D3A;
+    --navy-light: #132D5E;
+    --navy-surface: #0E2347;
+    --emerald: #00C9A7;
+    --emerald-dim: #00A68A;
+    --emerald-glow: rgba(0,201,167,0.15);
+    --amber: #FFB800;
+    --amber-dim: #CC9300;
+    --red: #FF4D6A;
+    --text: #E8EDF5;
+    --text-dim: #8B9DC3;
+    --text-muted: #5A6F94;
+    --code-bg: #060E1B;
+    --border: rgba(0,201,167,0.2);
+    --pass: #00E676;
+    --fail: #FF4D6A;
+}
+
+/* 오프라인 전시 환경 — CDN 폰트 비활성화, 시스템 폰트 폴백 사용 */
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    font-family: 'Noto Sans KR', -apple-system, 'Segoe UI', sans-serif;
+    background: var(--navy);
+    color: var(--text);
+    overflow: hidden;
+    height: 100vh;
+    height: 100dvh;
+    width: 100vw;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: manipulation;
+}
+
+/* ══════════════════════════════════════
+   세션 B: 세로 스택 레이아웃 (모바일)
+   캔버스(상단) → 그래프 → 교육 노트 → 컨트롤(하단)
+   ══════════════════════════════════════ */
+.app-layout {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
+}
+
+/* ── 상단: 캔버스 영역 (flex 확장) ── */
+.canvas-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    position: relative;
+}
+
+.canvas-wrap {
+    flex: 1;
+    position: relative;
+    background: var(--navy);
+    overflow: hidden;
+    min-height: 0;
+}
+
+canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+/* ── 제목 오버레이 (캔버스 좌상단) ── */
+.title-overlay {
+    position: absolute;
+    top: 10px;
+    left: 14px;
+    z-index: 10;
+    pointer-events: none;
+}
+
+.title-overlay h1 {
+    font-size: 20px;
+    font-weight: 900;
+    color: var(--emerald);
+    text-shadow: 0 2px 12px rgba(0,201,167,0.3);
+    letter-spacing: -0.5px;
+}
+
+.title-overlay .subtitle {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 1px;
+}
+
+/* ── 축 높이 그래프 영역 (접이식, 기본 접힘) ── */
+.axle-graph-bar {
+    height: 0;
+    overflow: hidden;
+    background: var(--code-bg);
+    border-top: 1px solid var(--border);
+    transition: height 0.35s ease;
+    position: relative;
+    flex-shrink: 0;
+}
+.axle-graph-bar.visible { height: 90px; }
+.axle-graph-bar canvas { width: 100%; height: 100%; }
+.axle-graph-label {
+    position: absolute; top: 3px; left: 10px;
+    font-size: 9px; font-weight: 700; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 1px;
+    pointer-events: none; z-index: 2;
+}
+
+/* ── 교육 노트 바 ── */
+.edu-note-bar {
+    padding: 8px 14px;
+    background: var(--emerald-glow);
+    border-top: 1px solid var(--border);
+    text-align: center;
+    min-height: 38px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.edu-note-bar .note-text {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--emerald);
+    line-height: 1.4;
+}
+
+.edu-note-bar .note-question {
+    font-size: 17px;
+    font-weight: 700;
+    color: var(--amber);
+    line-height: 1.4;
+}
+
+/* ══════════════════════════════════════
+   하단: 컨트롤 영역 (세로 스택)
+   ══════════════════════════════════════ */
+.control-panel {
+    flex-shrink: 0;
+    background: var(--code-bg);
+    border-top: 1px solid var(--border);
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    overflow-y: auto;
+    max-height: 45vh;
+}
+
+/* ⑤ 컨트롤 바 1줄: ▶⏸ + ↻ + N슬라이더 */
+.control-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.control-row .btn-icon {
+    width: 44px;
+    height: 40px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--navy-surface);
+    color: var(--text);
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+    flex-shrink: 0;
+    font-family: inherit;
+    transition: all 0.15s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.control-row .btn-icon:active { background: var(--emerald-glow); }
+.control-row .btn-icon.active { background: var(--emerald); color: var(--navy); border-color: var(--emerald); }
+
+.slider-inline {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
+.slider-inline label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-dim);
+    flex-shrink: 0;
+}
+
+.slider-inline input[type="range"] {
+    flex: 1;
+    accent-color: var(--emerald);
+    height: 10px;
+    min-width: 0;
+}
+
+.slider-inline .val {
+    font-size: 16px;
+    font-weight: 900;
+    color: var(--emerald);
+    min-width: 24px;
+    text-align: right;
+    flex-shrink: 0;
+}
+
+/* ⑥ 토글 바: 아이콘 중심 수평 배치 */
+.toggle-row {
+    display: flex;
+    gap: 6px;
+}
+
+.toggle-row .tbtn {
+    flex: 1;
+    height: 36px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--navy-surface);
+    color: var(--text-dim);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: inherit;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+}
+.toggle-row .tbtn:active { background: var(--emerald-glow); }
+.toggle-row .tbtn.on { background: var(--emerald-glow); border-color: var(--emerald-dim); color: var(--emerald); }
+.toggle-row .tbtn.road-toggle {
+    background: var(--navy-light);
+    color: var(--amber);
+    border-color: rgba(255,184,0,0.3);
+    font-weight: 700;
+}
+.toggle-row .tbtn.road-toggle.on {
+    background: rgba(255,184,0,0.15);
+    border-color: var(--amber-dim);
+    color: var(--amber);
+}
+
+/* n=3 복귀 버튼 */
+.recover-btn {
+    width: 100%;
+    height: 36px;
+    border: 1px solid rgba(255,77,106,0.4);
+    border-radius: 8px;
+    background: rgba(255,77,106,0.15);
+    color: #FF4D6A;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    font-family: inherit;
+    display: none;
+}
+
+/* ⑦ 도로 비교 수평 탭: 4버튼 수평 1줄 */
+.road-shape-row { display: none; gap: 4px; }
+.road-shape-row.visible { display: flex; }
+.road-shape-row .rsbtn {
+    flex: 1;
+    height: 34px;
+    border: 1px solid rgba(90,111,148,0.3);
+    border-radius: 6px;
+    background: var(--navy-surface);
+    color: var(--text-dim);
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: inherit;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    padding: 0 2px;
+}
+.road-shape-row .rsbtn:active { background: var(--emerald-glow); }
+.road-shape-row .rsbtn.active {
+    border-color: var(--emerald); color: var(--emerald);
+    background: var(--emerald-glow); box-shadow: 0 0 8px rgba(0,201,167,0.2);
+}
+.road-shape-row .rsbtn.active.alt-active {
+    border-color: var(--amber); color: var(--amber);
+    background: rgba(255,184,0,0.1); box-shadow: 0 0 8px rgba(255,184,0,0.15);
+}
+</style>
+</head>
+<body>
+
+<div class="app-layout">
+    <!-- ═══ 상단: 캔버스 ═══ -->
+    <div class="canvas-panel">
+        <div class="canvas-wrap" id="canvasWrap">
+            <canvas id="simCanvas"></canvas>
+            <div class="title-overlay">
+                <h1>사각바퀴의 비밀</h1>
+                <div class="subtitle">경남수학문화관 A-17</div>
+            </div>
+        </div>
+
+        <!-- 축 높이 그래프 (접이식, 기본 접힘 — Level 2에서 자동 펼침) -->
+        <div class="axle-graph-bar" id="axleGraphBar">
+            <div class="axle-graph-label">축 높이 변화</div>
+            <canvas id="axleGraphCanvas"></canvas>
+        </div>
+
+        <!-- 교육 노트 -->
+        <div class="edu-note-bar" id="eduNoteBar">
+            <span class="note-text" id="eduNote"></span>
+        </div>
+    </div>
+
+    <!-- ═══ 하단: 컨트롤 영역 ═══ -->
+    <div class="control-panel">
+        <!-- ⑤ 1줄: ▶⏸ + ↻ + N슬라이더 -->
+        <div class="control-row">
+            <button class="btn-icon" id="btnPlay">▶</button>
+            <button class="btn-icon" id="btnReset">↻</button>
+            <div class="slider-inline">
+                <label>N</label>
+                <input type="range" id="sliderN" min="3" max="20" value="4">
+                <span class="val" id="valN">4</span>
+            </div>
+        </div>
+
+        <!-- ⑥ 토글 바: 아이콘 중심 -->
+        <div class="toggle-row">
+            <button class="tbtn" id="btnTrail">📏 궤적</button>
+            <button class="tbtn on" id="btnContact">📌 접촉점</button>
+            <button class="tbtn road-toggle" id="btnFlat">🔄 평평한도로</button>
+        </div>
+
+        <!-- n=3 복귀 버튼 -->
+        <button class="recover-btn" id="btnRecoverN4">🔄 사각형(n=4)으로 돌아가기</button>
+
+        <!-- ⑦ 도로 비교 수평 탭 (Level 2) -->
+        <div class="road-shape-row" id="roadShapeSection">
+            <button class="rsbtn active" data-road="catenary">〰️ 현수선</button>
+            <button class="rsbtn" data-road="parabola">⌒ 포물선</button>
+            <button class="rsbtn" data-road="semicircle">◠ 반원</button>
+            <button class="rsbtn" data-road="triangle">△ 삼각파</button>
+        </div>
+    </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// 제1부: 불변 엔진 함수 6개 — 설계명세 v0.1.1 바이트 동일 보존
+// ═══════════════════════════════════════════════════════════════
+
+// ── 함수 1: computeRoadParams(n, s) ──
+function computeRoadParams(n, s) {
+    const a = s / (2 * Math.tan(Math.PI / n));  // 현수선 매개변수 = 내접원 반지름
+    const r = a;                                  // 내접원 반지름
+    const R = s / (2 * Math.sin(Math.PI / n));   // 외접원 반지름
+    const x0 = a * Math.asinh(Math.tan(Math.PI / n));  // 구간 반폭
+    const h = a * (1 / Math.cos(Math.PI / n) - 1);     // 구간 깊이
+    const W = 2 * x0;                             // 구간 전폭
+
+    return { n, s, a, r, R, x0, h, W };
+}
+
+// ── 함수 2: computeRoadY(x, params) ──
+function computeRoadY(x, params) {
+    const { a, R, x0, W } = params;
+
+    // x가 어느 구간에 속하는지 계산
+    // 구간 k의 중심: c_k = (2k+1) * x0 = x0 + k * W
+    // 구간 k의 범위: [k * W, (k+1) * W]
+    const segIndex = Math.floor(x / W);
+    const localX = x - segIndex * W - x0;  // 구간 중심 기준 로컬 좌표 (-x0 ~ +x0)
+
+    // 역현수선
+    const y = -a * Math.cosh(localX / a) + R;
+
+    return y;
+}
+
+// ── 함수 3: computeWheelState(arcLen, params) ──
+function computeWheelState(arcLen, params) {
+    const { n, s, a, r, R, x0, W } = params;
+    const tanPiN = Math.tan(Math.PI / n);
+
+    // ─── Step 1: 호장 → 변 인덱스 + 변 위 소모량 ───
+    const totalPerimeter = n * s;
+    const arcInCycle = ((arcLen % totalPerimeter) + totalPerimeter) % totalPerimeter;
+    const faceIndex = Math.floor(arcInCycle / s);
+    const t = arcInCycle - faceIndex * s;  // 현재 변 위 소모량 (0 ≤ t < s)
+
+    // ─── Step 2: 호장 → 도로 위 접촉점 로컬 좌표 ───
+    // 현수선 호장 공식에서 역매핑:
+    //   t = a·sinh(x_local/a) + a·tan(π/n)  (구간 시작 기준)
+    //   → sinh(x_local/a) = t/a - tan(π/n)
+    //   → x_local = a · arcsinh(t/a - tan(π/n))
+    const x_local = a * Math.asinh(t / a - tanPiN);
+
+    // ─── Step 3: 접촉점 글로벌 좌표 ───
+    const fullCycles = Math.floor(arcLen / totalPerimeter);
+    const segmentGlobal = fullCycles * n + faceIndex;
+    const contactX = segmentGlobal * W + x0 + x_local;
+    const contactY = -a * Math.cosh(x_local / a) + R;
+
+    // ─── Step 4: 도로 접선각 ───
+    // dy/dx = d/dx[-a·cosh(x/a)+R] = -sinh(x/a)
+    const roadSlope = -Math.sinh(x_local / a);
+    const roadAngle = Math.atan2(roadSlope, 1);
+
+    // ─── Step 5: 축(axle) 위치 ───
+    // 기하학적 유도 (§2.4.1):
+    //   축 = 접촉점 - (t-s/2)·e_tan + r·e_norm
+    //   e_tan = (cos(ra), sin(ra)), e_norm = (-sin(ra), cos(ra))
+    //
+    // 핵심 관계: t - s/2 = a·sinh(x_local/a)  [해석적으로 증명됨]
+    // cy = R은 해석적 항등식으로 보장됨 (cosh²-sinh²=1에 의해)
+    const t_from_mid = t - s / 2;
+    const cos_ra = Math.cos(roadAngle);
+    const sin_ra = Math.sin(roadAngle);
+
+    const cx = contactX - t_from_mid * cos_ra - r * sin_ra;
+    const cy = contactY - t_from_mid * sin_ra + r * cos_ra;  // = R (항등식)
+
+    // ─── Step 6: 바퀴 회전각 (wheelAngle) ───
+    // 확정 공식 (n=4,5,6,8에서 전수 검증 완료):
+    //
+    //   wheelAngle = roadAngle - π/2 - π/n - faceIndex · (2π/n)
+    //
+    const wheelAngle = roadAngle - Math.PI / 2 - Math.PI / n - faceIndex * (2 * Math.PI / n);
+
+    return { cx, cy, wheelAngle, contactX, contactY, roadAngle, faceIndex, t, x_local };
+}
+
+// ── 함수 4: computeWheelVertices(cx, cy, wheelAngle, n, R) ──
+function computeWheelVertices(cx, cy, wheelAngle, n, R) {
+    const vertices = [];
+    for (let i = 0; i < n; i++) {
+        const theta = wheelAngle + (2 * Math.PI / n) * i;
+        vertices.push({
+            x: cx + R * Math.cos(theta),
+            y: cy + R * Math.sin(theta)
+        });
+    }
+    return vertices;
+}
+
+// ── 함수 5: computeAxleHeight(params) ──
+function computeAxleHeight(params) {
+    return params.R;  // 상수
+}
+
+// ── 함수 6: computeFlatRoadAxleHeight(t, params) ──
+function computeFlatRoadAxleHeight(t, params) {
+    const { s, r } = params;
+    // t: 현재 변 위 소모량 (0 ≤ t ≤ s)
+    // 변 중점에서의 거리
+    const d = t - s / 2;
+    // 축에서 접촉점까지의 거리 = √(r² + d²), 평평한 도로이므로 이것이 축 높이
+    return Math.sqrt(r * r + d * d);
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// 제1.5부: 대체 도로 모듈 (Phase 4: Level 2)
+// ═══════════════════════════════════════════════════════════════
+
+// ── 대체 도로 y(x_local) 함수 ──
+// x_local: 구간 중심 기준 (-x0 ~ +x0)
+// 이음부 조건: y(-x0)=0, y(0)=h, y(+x0)=0
+
+function parabolicRoadYLocal(xl, x0, h) {
+    return h * (1 - (xl / x0) * (xl / x0));
+}
+
+function semicircularRoadYLocal(xl, x0, h) {
+    const rho = (x0 * x0 + h * h) / (2 * h);
+    const val = rho * rho - xl * xl;
+    if (val < 0) return 0;
+    return Math.sqrt(val) - (rho - h);
+}
+
+function triangularRoadYLocal(xl, x0, h) {
+    return h * (1 - Math.abs(xl) / x0);
+}
+
+// ── 대체 도로 도함수 ──
+function parabolicSlope(xl, x0, h) {
+    return -2 * h * xl / (x0 * x0);
+}
+
+function semicircularSlope(xl, x0, h) {
+    const rho = (x0 * x0 + h * h) / (2 * h);
+    const val = rho * rho - xl * xl;
+    if (val <= 1e-12) return 0;
+    return -xl / Math.sqrt(val);
+}
+
+function triangularSlope(xl, x0, h) {
+    if (xl > 1e-10) return -h / x0;
+    if (xl < -1e-10) return h / x0;
+    return 0;
+}
+
+// ── 글로벌 x → y (대체 도로) ──
+function computeAltRoadY(x, params, roadType) {
+    const { x0, h, W } = params;
+    const segIndex = Math.floor(x / W);
+    const localX = x - segIndex * W - x0;
+    switch (roadType) {
+        case 'parabola': return parabolicRoadYLocal(localX, x0, h);
+        case 'semicircle': return semicircularRoadYLocal(localX, x0, h);
+        case 'triangle': return triangularRoadYLocal(localX, x0, h);
+        default: return computeRoadY(x, params);
+    }
+}
+
+// ── 수치적 호장 테이블 ──
+function buildArcTable(roadType, params, numPoints) {
+    const { x0, h } = params;
+    const dx = (2 * x0) / numPoints;
+    // Float64Array: [x_local, arcLen, y] × (numPoints+1)
+    const table = new Float64Array((numPoints + 1) * 3);
+    let slopeFunc, yFunc;
+    switch (roadType) {
+        case 'parabola':
+            slopeFunc = (xl) => parabolicSlope(xl, x0, h);
+            yFunc = (xl) => parabolicRoadYLocal(xl, x0, h);
+            break;
+        case 'semicircle':
+            slopeFunc = (xl) => semicircularSlope(xl, x0, h);
+            yFunc = (xl) => semicircularRoadYLocal(xl, x0, h);
+            break;
+        case 'triangle':
+            slopeFunc = (xl) => triangularSlope(xl, x0, h);
+            yFunc = (xl) => triangularRoadYLocal(xl, x0, h);
+            break;
+    }
+    let cumArc = 0;
+    for (let i = 0; i <= numPoints; i++) {
+        const xl = -x0 + i * dx;
+        const y = yFunc(xl);
+        const s = slopeFunc(xl);
+        if (i > 0) {
+            const prevXl = -x0 + (i - 1) * dx;
+            const prevS = slopeFunc(prevXl);
+            cumArc += (Math.sqrt(1 + s * s) + Math.sqrt(1 + prevS * prevS)) * dx / 2;
+        }
+        table[i * 3 + 0] = xl;
+        table[i * 3 + 1] = cumArc;
+        table[i * 3 + 2] = y;
+    }
+    return { table, totalArc: cumArc, numPoints, slopeFunc };
+}
+
+// ── 호장→x_local 역매핑 (이진 탐색 + 선형 보간) ──
+function arcToLocal(arcLen, atd) {
+    const { table, totalArc, numPoints, slopeFunc } = atd;
+    const a = ((arcLen % totalArc) + totalArc) % totalArc;
+    let lo = 0, hi = numPoints;
+    while (lo < hi - 1) {
+        const mid = (lo + hi) >> 1;
+        if (table[mid * 3 + 1] <= a) lo = mid; else hi = mid;
+    }
+    const arcLo = table[lo * 3 + 1], arcHi = table[hi * 3 + 1];
+    const frac = arcHi > arcLo ? (a - arcLo) / (arcHi - arcLo) : 0;
+    const xl = table[lo * 3 + 0] + frac * (table[hi * 3 + 0] - table[lo * 3 + 0]);
+    const y = table[lo * 3 + 2] + frac * (table[hi * 3 + 2] - table[lo * 3 + 2]);
+    return { x_local: xl, y, slope: slopeFunc(xl) };
+}
+
+// ── 대체 도로에서의 바퀴 상태 ──
+function computeWheelStateOnAltRoad(arcLen, params, atd) {
+    const { n, s, r, R, x0, W } = params;
+    const totalPerimeter = n * s;
+    const arcInCycle = ((arcLen % totalPerimeter) + totalPerimeter) % totalPerimeter;
+    const faceIndex = Math.floor(arcInCycle / s);
+    const t = arcInCycle - faceIndex * s;
+
+    const lookup = arcToLocal(t, atd);
+    const x_local = lookup.x_local;
+    const contactY = lookup.y;
+    const roadAngle = Math.atan2(lookup.slope, 1);
+
+    const fullCycles = Math.floor(arcLen / totalPerimeter);
+    const segmentGlobal = fullCycles * n + faceIndex;
+    const contactX = segmentGlobal * W + x0 + x_local;
+
+    const t_from_mid = t - s / 2;
+    const cos_ra = Math.cos(roadAngle);
+    const sin_ra = Math.sin(roadAngle);
+    const cx = contactX - t_from_mid * cos_ra - r * sin_ra;
+    const cy = contactY - t_from_mid * sin_ra + r * cos_ra;
+    const wheelAngle = roadAngle - Math.PI / 2 - Math.PI / n - faceIndex * (2 * Math.PI / n);
+
+    return { cx, cy, wheelAngle, contactX, contactY, roadAngle, faceIndex, t, x_local };
+}
+
+// ── 호장 테이블 캐시 ──
+const ARC_TABLE_POINTS = 2000;
+let altRoadTables = {};
+function rebuildArcTables(params) {
+    altRoadTables = {
+        parabola: buildArcTable('parabola', params, ARC_TABLE_POINTS),
+        semicircle: buildArcTable('semicircle', params, ARC_TABLE_POINTS),
+        triangle: buildArcTable('triangle', params, ARC_TABLE_POINTS),
+    };
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// 제2부: 시뮬레이션 + 렌더링 + UI
+// ═══════════════════════════════════════════════════════════════
+
+const canvas = document.getElementById('simCanvas');
+const ctx = canvas.getContext('2d');
+
+// ── 색상 상수 ──
+const COL_EMERALD = '#00C9A7';
+const COL_AMBER = '#FFB800';
+const COL_RED = '#FF4D6A';
+const COL_ROAD = '#3A5F8A';
+const COL_ROAD_FILL = 'rgba(58, 95, 138, 0.12)';
+
+// 대체 도로 색상 (Phase 4)
+const ROAD_COLORS = {
+    catenary:    { stroke: '#3A5F8A', fill: 'rgba(58,95,138,0.12)', graph: '#00C9A7' },
+    parabola:    { stroke: '#E07B39', fill: 'rgba(224,123,57,0.08)', graph: '#E07B39' },
+    semicircle:  { stroke: '#9B59B6', fill: 'rgba(155,89,182,0.08)', graph: '#9B59B6' },
+    triangle:    { stroke: '#E74C3C', fill: 'rgba(231,76,60,0.08)', graph: '#E74C3C' },
+};
+const ROAD_LABELS = { catenary:'현수선', parabola:'포물선', semicircle:'반원', triangle:'삼각파' };
+
+// ── 시뮬레이션 상태 ──
+const state = {
+    arcLen: 0,
+    speed: 60,
+    playing: false,
+    n: 4,
+    R_fixed: 56,  // 외접원 반지름 고정 (px) — n에 무관하게 바퀴 크기 일정
+    s: 2 * 56 * Math.sin(Math.PI / 4),  // s = 2·R·sin(π/n) 역산
+    params: null,
+    axleTrail: [],
+    showAxleTrail: false,
+    showContactPoint: true,
+    flatRoad: false,
+    devMode: false,
+    demoMode: false,
+
+    // POC 시퀀스 상태 (E2 권고)
+    pocPhase: 'predict',
+    trailRevealed: false,
+
+    // 교육 노트 시퀀스
+    eduStep: 0,
+
+    // n=3 간섭 상태
+    n3Stopped: false,
+    n3StopTimer: null,
+    sliderTouched: false,
+
+    // Phase 4: Level 2 도로 비교 상태
+    roadType: 'catenary',
+    level2Active: false,
+    axleHeightHistory: [],
+    ghostHistory: null,
+    ghostRoadType: null,
+    roadShapeTouched: false,
+    catenaryDiscovered: false,
+};
+
+state.params = computeRoadParams(state.n, state.s);
+rebuildArcTables(state.params);
+
+// ── 뷰포트: 옵션 B (축을 캔버스 1/3 고정) ──
+// DPR 보정: canvas.width는 물리 크기이므로, 논리 크기를 별도 추적
+let canvasLogicalW = 0, canvasLogicalH = 0;
+
+function worldToCanvas(wx, wy, ws) {
+    const axleCenterX = canvasLogicalW / 3;
+    const baseY = canvasLogicalH * 0.72;
+    const sx = axleCenterX + (wx - ws.cx);
+    const sy = baseY - wy;
+    return { x: sx, y: sy };
+}
+
+// ── 바퀴 상태 계산 (한 프레임에 한 번) ──
+function computeCurrentWheelState() {
+    if (state.flatRoad) {
+        const p = state.params;
+        const totalPerimeter = p.n * p.s;
+        const arcInCycle = ((state.arcLen % totalPerimeter) + totalPerimeter) % totalPerimeter;
+        const faceIndex = Math.floor(arcInCycle / p.s);
+        const t = arcInCycle - faceIndex * p.s;
+        const flatH = computeFlatRoadAxleHeight(t, p);
+        const contactX = state.arcLen;
+        const d = t - p.s / 2;
+        const wheelAngle_flat = -Math.PI / 2 - Math.PI / p.n - faceIndex * (2 * Math.PI / p.n) - Math.atan2(d, p.r);
+        return {
+            cx: contactX, cy: flatH, wheelAngle: wheelAngle_flat,
+            contactX: contactX, contactY: 0, roadAngle: 0,
+            faceIndex: faceIndex, t: t, x_local: 0,
+        };
+    } else if (state.level2Active && state.roadType !== 'catenary') {
+        const tbl = altRoadTables[state.roadType];
+        if (tbl) return computeWheelStateOnAltRoad(state.arcLen, state.params, tbl);
+        return computeWheelState(state.arcLen, state.params);
+    } else {
+        return computeWheelState(state.arcLen, state.params);
+    }
+}
+
+
+// ═══ 렌더링 함수들 ═══
+
+function drawRoad(params, ws) {
+    const { W } = params;
+    const visibleLeft = ws.cx - canvasLogicalW / 3 - 50;
+    const visibleRight = ws.cx + canvasLogicalW * 2 / 3 + 50;
+    const startSeg = Math.floor(visibleLeft / W);
+    const endSeg = Math.ceil(visibleRight / W);
+
+    const isAlt = state.level2Active && state.roadType !== 'catenary' && !state.flatRoad;
+    const roadCol = isAlt ? ROAD_COLORS[state.roadType] : ROAD_COLORS.catenary;
+
+    ctx.beginPath();
+    let first = true;
+    for (let seg = startSeg; seg <= endSeg; seg++) {
+        const segStart = seg * W;
+        const steps = 40;
+        for (let i = 0; i <= steps; i++) {
+            const wx = segStart + (W / steps) * i;
+            let wy;
+            if (state.flatRoad) wy = 0;
+            else if (isAlt) wy = computeAltRoadY(wx, params, state.roadType);
+            else wy = computeRoadY(wx, params);
+            const sc = worldToCanvas(wx, wy, ws);
+            if (first) { ctx.moveTo(sc.x, sc.y); first = false; }
+            else { ctx.lineTo(sc.x, sc.y); }
+        }
+    }
+    ctx.strokeStyle = roadCol.stroke;
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+    // 도로 아래 채우기
+    ctx.lineTo(worldToCanvas(visibleRight, -200, ws).x, worldToCanvas(visibleRight, -200, ws).y);
+    ctx.lineTo(worldToCanvas(visibleLeft, -200, ws).x, worldToCanvas(visibleLeft, -200, ws).y);
+    ctx.closePath();
+    ctx.fillStyle = roadCol.fill;
+    ctx.fill();
+}
+
+function drawAxleTrail(ws) {
+    if (state.axleTrail.length < 2) return;
+    ctx.beginPath();
+    let first = true;
+    for (const pt of state.axleTrail) {
+        const sc = worldToCanvas(pt.x, pt.y, ws);
+        if (sc.x < -10 || sc.x > canvasLogicalW + 10) continue;
+        if (first) { ctx.moveTo(sc.x, sc.y); first = false; }
+        else { ctx.lineTo(sc.x, sc.y); }
+    }
+    ctx.strokeStyle = 'rgba(255, 77, 106, 0.7)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+}
+
+function drawAxleHeightLine(ws) {
+    if (state.flatRoad) return;
+    const H = state.params.R;
+    const left = worldToCanvas(-1000, H, ws);
+    ctx.setLineDash([8, 6]);
+    ctx.beginPath();
+    ctx.moveTo(0, left.y);
+    ctx.lineTo(canvasLogicalW, left.y);
+    ctx.strokeStyle = 'rgba(255, 77, 106, 0.2)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.setLineDash([]);
+}
+
+function drawWheel(ws) {
+    const verts = computeWheelVertices(ws.cx, ws.cy, ws.wheelAngle, state.params.n, state.params.R);
+    const screenVerts = verts.map(v => worldToCanvas(v.x, v.y, ws));
+
+    // 다각형 채우기 + 테두리
+    ctx.beginPath();
+    screenVerts.forEach((sv, i) => {
+        if (i === 0) ctx.moveTo(sv.x, sv.y);
+        else ctx.lineTo(sv.x, sv.y);
+    });
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(0, 201, 167, 0.08)';
+    ctx.fill();
+    ctx.strokeStyle = COL_EMERALD;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // 대각선 (축→꼭짓점)
+    const axleSc = worldToCanvas(ws.cx, ws.cy, ws);
+    ctx.beginPath();
+    for (const sv of screenVerts) {
+        ctx.moveTo(axleSc.x, axleSc.y);
+        ctx.lineTo(sv.x, sv.y);
+    }
+    ctx.strokeStyle = 'rgba(0, 201, 167, 0.3)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // 꼭짓점 점
+    for (const sv of screenVerts) {
+        ctx.beginPath();
+        ctx.arc(sv.x, sv.y, 3, 0, Math.PI * 2);
+        ctx.fillStyle = COL_EMERALD;
+        ctx.fill();
+    }
+
+    // 현재 접촉 변 하이라이트
+    const fi = ws.faceIndex;
+    const v1 = screenVerts[fi];
+    const v2 = screenVerts[(fi + 1) % state.params.n];
+    ctx.beginPath();
+    ctx.moveTo(v1.x, v1.y);
+    ctx.lineTo(v2.x, v2.y);
+    ctx.strokeStyle = COL_AMBER;
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+    // n=3 간섭 시각화
+    if (state.params.n === 3 && !state.flatRoad) {
+        for (let i = 0; i < verts.length; i++) {
+            const roadY = computeRoadY(verts[i].x, state.params);
+            const penetration = roadY - verts[i].y;
+            if (penetration > 0.5) {
+                const sv = screenVerts[i];
+                ctx.beginPath();
+                ctx.moveTo(sv.x - 7, sv.y - 7);
+                ctx.lineTo(sv.x + 7, sv.y + 7);
+                ctx.moveTo(sv.x + 7, sv.y - 7);
+                ctx.lineTo(sv.x - 7, sv.y + 7);
+                ctx.strokeStyle = COL_RED;
+                ctx.lineWidth = 2.5;
+                ctx.stroke();
+
+                const roadSc = worldToCanvas(verts[i].x, roadY, ws);
+                ctx.beginPath();
+                ctx.arc(sv.x, (sv.y + roadSc.y) / 2, Math.abs(sv.y - roadSc.y) / 2 + 3, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(255, 77, 106, 0.2)';
+                ctx.fill();
+
+                const prev = (i - 1 + verts.length) % verts.length;
+                const next = (i + 1) % verts.length;
+                ctx.beginPath();
+                ctx.moveTo(screenVerts[prev].x, screenVerts[prev].y);
+                ctx.lineTo(sv.x, sv.y);
+                ctx.lineTo(screenVerts[next].x, screenVerts[next].y);
+                ctx.strokeStyle = 'rgba(255, 77, 106, 0.6)';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+            }
+        }
+    }
+}
+
+function drawContactPoint(ws) {
+    const sc = worldToCanvas(ws.contactX, ws.contactY, ws);
+    ctx.beginPath();
+    ctx.arc(sc.x, sc.y, 5, 0, Math.PI * 2);
+    ctx.fillStyle = COL_AMBER;
+    ctx.fill();
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+}
+
+function drawAxle(ws) {
+    const sc = worldToCanvas(ws.cx, ws.cy, ws);
+    ctx.beginPath();
+    ctx.arc(sc.x, sc.y, 6, 0, Math.PI * 2);
+    ctx.fillStyle = COL_RED;
+    ctx.fill();
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+}
+
+// ── 메인 렌더 ──
+function render() {
+    const rect = canvas.parentElement.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const targetW = Math.round(rect.width * dpr);
+    const targetH = Math.round(rect.height * dpr);
+    if (canvas.width !== targetW || canvas.height !== targetH) {
+        canvas.width = targetW;
+        canvas.height = targetH;
+        canvas.style.width = rect.width + 'px';
+        canvas.style.height = rect.height + 'px';
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    canvasLogicalW = rect.width;
+    canvasLogicalH = rect.height;
+
+    const ws = computeCurrentWheelState();
+
+    ctx.clearRect(0, 0, canvasLogicalW, canvasLogicalH);
+
+    drawRoad(state.params, ws);
+    if (state.showAxleTrail) drawAxleTrail(ws);
+    if (!state.flatRoad) drawAxleHeightLine(ws);
+    drawWheel(ws);
+    if (state.showContactPoint) drawContactPoint(ws);
+    drawAxle(ws);
+
+    // Phase 4: 대체 도로에서 축 편차 시각 강조
+    if (state.level2Active && state.roadType !== 'catenary' && !state.flatRoad && !state.demoMode) {
+        const deviation = ws.cy - state.params.R;
+        if (Math.abs(deviation) > 0.01) {
+            const axleSc = worldToCanvas(ws.cx, ws.cy, ws);
+            const refSc = worldToCanvas(ws.cx, state.params.R, ws);
+            ctx.setLineDash([3, 3]);
+            ctx.beginPath();
+            ctx.moveTo(axleSc.x, axleSc.y);
+            ctx.lineTo(refSc.x, refSc.y);
+            ctx.strokeStyle = 'rgba(255,184,0,0.6)';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.beginPath();
+            ctx.arc(refSc.x, refSc.y, 4, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(255,184,0,0.5)';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+        }
+    }
+
+    // 도로 깊이 수치 표시
+    if (!state.flatRoad && !state.demoMode) {
+        const hPx = state.params.h;
+        const isAlt = state.level2Active && state.roadType !== 'catenary';
+        const label = isAlt
+            ? `${ROAD_LABELS[state.roadType]} · h=${hPx.toFixed(1)}`
+            : `h=${hPx.toFixed(1)}`;
+        ctx.font = '11px "Noto Sans KR", sans-serif';
+        ctx.fillStyle = 'rgba(139, 157, 195, 0.5)';
+        ctx.textAlign = 'right';
+        ctx.fillText(label, canvasLogicalW - 10, canvasLogicalH - 8);
+        ctx.textAlign = 'left';
+    }
+
+    return ws;
+}
+
+
+// ═══ 축 높이 미니 그래프 (Phase 4: Level 2) ═══
+
+const graphCanvas = document.getElementById('axleGraphCanvas');
+const graphCtx = graphCanvas.getContext('2d');
+
+function renderAxleGraph() {
+    const graphBar = document.getElementById('axleGraphBar');
+    if (!state.level2Active || state.flatRoad) {
+        graphBar.classList.remove('visible');
+        return;
+    }
+    graphBar.classList.add('visible');
+
+    const rect = graphBar.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const targetW = Math.round(rect.width * dpr);
+    const targetH = Math.round(rect.height * dpr);
+    if (graphCanvas.width !== targetW || graphCanvas.height !== targetH) {
+        graphCanvas.width = targetW;
+        graphCanvas.height = targetH;
+        graphCanvas.style.width = rect.width + 'px';
+        graphCanvas.style.height = rect.height + 'px';
+        graphCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    const w = rect.width, h = rect.height;
+    const pad = { top: 18, bottom: 6, left: 44, right: 10 };
+    const plotW = w - pad.left - pad.right;
+    const plotH = h - pad.top - pad.bottom;
+
+    graphCtx.clearRect(0, 0, w, h);
+
+    const R = state.params.R;
+
+    let maxDev = 0;
+    for (const pt of state.axleHeightHistory) {
+        const dev = Math.abs(pt.cy - R);
+        if (dev > maxDev) maxDev = dev;
+    }
+    if (state.ghostHistory) {
+        for (const pt of state.ghostHistory) {
+            const dev = Math.abs(pt.cy - R);
+            if (dev > maxDev) maxDev = dev;
+        }
+    }
+    maxDev = Math.max(maxDev * 1.4, 0.5);
+
+    const yCenter = pad.top + plotH / 2;
+    const yScale = plotH / (2 * maxDev);
+
+    // 기준선
+    const isCatenary = state.roadType === 'catenary';
+    graphCtx.setLineDash([6, 4]);
+    graphCtx.beginPath();
+    graphCtx.moveTo(pad.left, yCenter);
+    graphCtx.lineTo(pad.left + plotW, yCenter);
+    graphCtx.strokeStyle = isCatenary ? 'rgba(0,201,167,0.4)' : 'rgba(139,157,195,0.25)';
+    graphCtx.lineWidth = 1;
+    graphCtx.stroke();
+    graphCtx.setLineDash([]);
+
+    // 기준선 라벨
+    graphCtx.font = '9px "Noto Sans KR", sans-serif';
+    graphCtx.textAlign = 'left';
+    if (isCatenary) {
+        graphCtx.fillStyle = 'rgba(0,201,167,0.6)';
+        graphCtx.fillText('일정 ✓', pad.left + 4, yCenter - 5);
+    } else {
+        graphCtx.fillStyle = 'rgba(255,184,0,0.5)';
+        graphCtx.fillText('← 일정해야…', pad.left + 4, yCenter - 5);
+    }
+
+    // R 값 라벨
+    graphCtx.font = '9px "Courier New", monospace';
+    graphCtx.fillStyle = 'rgba(139,157,195,0.5)';
+    graphCtx.textAlign = 'right';
+    graphCtx.fillText('R=' + R.toFixed(1), pad.left - 3, yCenter + 3);
+
+    // 잔상 (ghost) — E2 우려 대응: 투명도 추가 감소
+    if (state.ghostHistory && state.ghostHistory.length > 1) {
+        const gc = ROAD_COLORS[state.ghostRoadType] || ROAD_COLORS.catenary;
+        graphCtx.beginPath();
+        let first = true;
+        for (let i = 0; i < state.ghostHistory.length; i++) {
+            const pt = state.ghostHistory[i];
+            const x = pad.left + (i / (state.ghostHistory.length - 1)) * plotW;
+            const y = yCenter - (pt.cy - R) * yScale;
+            if (first) { graphCtx.moveTo(x, y); first = false; }
+            else graphCtx.lineTo(x, y);
+        }
+        graphCtx.strokeStyle = gc.graph + '30';  // 90px 축소 대응: 잔상 투명도 추가 감소 (40→30)
+        graphCtx.lineWidth = 1.5;  // E2 우려 대응: 선 두께 2→1.5
+        graphCtx.stroke();
+
+        graphCtx.font = '8px "Noto Sans KR", sans-serif';
+        graphCtx.fillStyle = gc.graph + '50';
+        graphCtx.textAlign = 'left';
+        graphCtx.fillText(ROAD_LABELS[state.ghostRoadType], pad.left + 4, pad.top + 8);
+    }
+
+    // 현재 도로 그래프
+    let currentMaxDev = 0;
+    if (state.axleHeightHistory.length > 1) {
+        const cc = ROAD_COLORS[state.roadType] || ROAD_COLORS.catenary;
+        graphCtx.beginPath();
+        let first = true;
+        for (let i = 0; i < state.axleHeightHistory.length; i++) {
+            const pt = state.axleHeightHistory[i];
+            const x = pad.left + (i / Math.max(state.axleHeightHistory.length - 1, 1)) * plotW;
+            const y = yCenter - (pt.cy - R) * yScale;
+            if (first) { graphCtx.moveTo(x, y); first = false; }
+            else graphCtx.lineTo(x, y);
+            const dev = Math.abs(pt.cy - R);
+            if (dev > currentMaxDev) currentMaxDev = dev;
+        }
+        graphCtx.strokeStyle = cc.graph;
+        graphCtx.lineWidth = 2;  // E2 우려 대응: 2.5→2
+        graphCtx.stroke();
+
+        // 도로 이름 + 편차 수치
+        graphCtx.font = '9px "Noto Sans KR", sans-serif';
+        graphCtx.fillStyle = cc.graph;
+        graphCtx.textAlign = 'right';
+        const devLabel = state.roadType === 'catenary'
+            ? ROAD_LABELS[state.roadType] + ' (흔들림 없음)'
+            : ROAD_LABELS[state.roadType] + ' (±' + currentMaxDev.toFixed(2) + ')';
+        graphCtx.fillText(devLabel, pad.left + plotW - 3, pad.top + 8);
+    }
+
+    // 스케일 안내
+    if (maxDev < 2 && state.axleHeightHistory.length > 10) {
+        graphCtx.font = '8px "Noto Sans KR", sans-serif';
+        graphCtx.fillStyle = 'rgba(255,184,0,0.6)';
+        graphCtx.textAlign = 'center';
+        graphCtx.fillText('🔍 확대 표시', pad.left + plotW / 2, h - 2);
+    }
+}
+
+
+// ═══ 애니메이션 루프 ═══
+let lastTime = null;
+let frameCount = 0;
+
+function animate(timestamp) {
+    if (lastTime === null) lastTime = timestamp;
+    const dt = (timestamp - lastTime) / 1000;
+    lastTime = timestamp;
+
+    if (state.playing || state.demoMode) {
+        state.arcLen += state.speed * dt;
+    }
+
+    const ws = render();
+
+    if ((state.playing || state.demoMode) && state.showAxleTrail) {
+        state.axleTrail.push({ x: ws.cx, y: ws.cy });
+        if (state.axleTrail.length > 2000) {
+            state.axleTrail = state.axleTrail.slice(-1500);
+        }
+    }
+
+    // Phase 4: 축 높이 그래프 기록
+    if (state.level2Active && (state.playing || state.demoMode) && !state.flatRoad) {
+        state.axleHeightHistory.push({ arcLen: state.arcLen, cy: ws.cy });
+        if (state.axleHeightHistory.length > 400) {
+            state.axleHeightHistory = state.axleHeightHistory.slice(-400);
+        }
+    }
+
+    // POC 시퀀스: 일정 거리 주행 후 축 궤적 자동 표시
+    if (state.pocPhase === 'observe' && !state.trailRevealed && state.arcLen > state.params.s * 2) {
+        state.showAxleTrail = true;
+        state.trailRevealed = true;
+        btnTrail.classList.add('on');
+        updateEduNote();
+    }
+
+    // n=3 간섭 자동 정지
+    if (state.params.n === 3 && !state.flatRoad && state.roadType === 'catenary' && !state.n3Stopped &&
+        (state.playing || state.demoMode) && state.arcLen > state.params.s * 2) {
+        state.playing = false;
+        state.n3Stopped = true;
+        btnPlay.textContent = '▶';
+        btnPlay.classList.remove('active');
+        updateEduNote();
+
+        state.n3StopTimer = setTimeout(() => {
+            if (state.n3Stopped && state.params.n === 3) {
+                recoverFromN3();
+            }
+        }, 5000);
+    }
+
+    // 축 높이 그래프 (4프레임마다 1회)
+    if (state.level2Active && (frameCount % 4 === 0)) renderAxleGraph();
+    frameCount++;
+
+    requestAnimationFrame(animate);
+}
+
+requestAnimationFrame(animate);
+
+
+// ═══ 교육 노트 시퀀스 ═══
+
+const EDU_SEQUENCES = {
+    demo: { text: '실제로 탄 그 울퉁불퉁한 길을 펴면 이런 모양이에요!', isQuestion: false },
+    predict: { text: '가운데 빨간 점이 어떤 길을 그릴까요? 예상해 보세요!', isQuestion: true },
+    observe_catenary: { text: '어? 빨간 점이 일직선으로 움직여요! 도로 모양의 비밀이에요!', isQuestion: false },
+    flat_prompt: { text: '이번에는 도로를 바꿔 볼까요? 무슨 일이 일어날까요?', isQuestion: true },
+    flat_result: { text: '평평한 도로에서는 가운데 점(축)이 덜컹거려요! 도로가 중요하구나!', isQuestion: false },
+    slider_invite: { text: '바퀴 모양을 바꿔 볼까요? 줄여도 보고, 늘려도 보세요!', isQuestion: true },
+    n3_stopped: { text: '⚠️ 삼각형은 꼭짓점이 너무 뾰족해서 도로에 파고들어요!', isQuestion: true },
+    n_low: { text: '도로 굴곡이 눈에 확 띄죠? 바퀴와 도로가 딱 맞아야 해요!', isQuestion: false },
+    n_mid: { text: '변이 늘어날수록 도로가 점점... 어떻게 되고 있나요?', isQuestion: true },
+    high_n: { text: '변이 많아지면 도로가 거의 평평! 원래 바퀴가 둥근 이유!', isQuestion: false },
+    default_catenary: { text: '가운데 빨간 점(축)이 어떻게 움직이는지 보세요!', isQuestion: false },
+    level2_invite: { text: '도로 모양을 바꿔 볼까요? 다른 모양이면 어떻게 될까요?', isQuestion: true },
+    level2_alt_running: { text: '빨간 점(축)이 흔들려요! 아래 그래프를 보세요!', isQuestion: false },
+    level2_compare: { text: '다른 도로들도 눌러 보세요. 어떤 도로만 흔들리지 않나요?', isQuestion: true },
+    level2_discovered: { text: '이 특별한 곡선이 \'현수선\'이에요! 줄을 늘어뜨리면 생기는 곡선!', isQuestion: false },
+};
+
+function updateEduNote() {
+    const noteEl = document.getElementById('eduNote');
+    const recoverBtn = document.getElementById('btnRecoverN4');
+    let seq;
+
+    if (state.n === 3 && state.n3Stopped) {
+        seq = EDU_SEQUENCES.n3_stopped;
+        recoverBtn.style.display = 'block';
+    } else if (state.n === 3 && !state.flatRoad && state.roadType === 'catenary') {
+        seq = { text: '⚠️ 삼각형 바퀴... 잘 굴러갈 수 있을까요?', isQuestion: true };
+    } else if (state.flatRoad) {
+        seq = EDU_SEQUENCES.flat_result;
+    } else if (state.level2Active && state.catenaryDiscovered) {
+        seq = EDU_SEQUENCES.level2_discovered;
+    } else if (state.level2Active && state.roadType !== 'catenary') {
+        if (state.roadShapeTouched && state.axleHeightHistory.length > 30) {
+            seq = EDU_SEQUENCES.level2_compare;
+        } else {
+            seq = EDU_SEQUENCES.level2_alt_running;
+        }
+    } else if (state.level2Active && state.roadType === 'catenary' && state.roadShapeTouched) {
+        if (!state.catenaryDiscovered) state.catenaryDiscovered = true;
+        seq = EDU_SEQUENCES.level2_discovered;
+    } else if (state.level2Active) {
+        seq = EDU_SEQUENCES.level2_invite;
+    } else if (state.pocPhase === 'predict' && !state.trailRevealed) {
+        seq = EDU_SEQUENCES.predict;
+    } else if (state.trailRevealed && !state.flatRoad && !state.sliderTouched) {
+        seq = EDU_SEQUENCES.observe_catenary;
+    } else if (state.n >= 12) {
+        seq = EDU_SEQUENCES.high_n;
+    } else if (state.n >= 7) {
+        seq = EDU_SEQUENCES.n_mid;
+    } else if (state.n >= 4 && state.sliderTouched) {
+        seq = EDU_SEQUENCES.n_low;
+    } else {
+        seq = EDU_SEQUENCES.default_catenary;
+    }
+
+    if (state.n !== 3 || !state.n3Stopped) {
+        recoverBtn.style.display = 'none';
+    }
+
+    noteEl.className = seq.isQuestion ? 'note-question' : 'note-text';
+    noteEl.textContent = seq.text;
+}
+
+
+// ═══ 캔버스 탭 재생 토글 (데모 모드 대체) ═══
+document.getElementById('canvasWrap').addEventListener('click', () => {
+    state.playing = !state.playing;
+    btnPlay.textContent = state.playing ? '⏸' : '▶';
+    btnPlay.classList.toggle('active', state.playing);
+    if (state.playing && state.pocPhase === 'predict') {
+        state.pocPhase = 'observe';
+        updateEduNote();
+    }
+});
+
+
+// ═══ 컨트롤 이벤트 ═══
+
+const btnPlay = document.getElementById('btnPlay');
+const btnReset = document.getElementById('btnReset');
+const sliderN = document.getElementById('sliderN');
+const btnFlat = document.getElementById('btnFlat');
+const btnTrail = document.getElementById('btnTrail');
+const btnContact = document.getElementById('btnContact');
+
+function ensureNotDemo() {
+    // 모바일: 데모 모드 없음
+}
+
+btnPlay.addEventListener('click', (e) => {
+    e.stopPropagation();  // canvasWrap click과 버블링 방지
+    ensureNotDemo();
+    state.playing = !state.playing;
+    btnPlay.textContent = state.playing ? '⏸' : '▶';
+    btnPlay.classList.toggle('active', state.playing);
+
+    if (state.playing && state.pocPhase === 'predict') {
+        state.pocPhase = 'observe';
+        updateEduNote();
+    }
+});
+
+btnReset.addEventListener('click', () => {
+    ensureNotDemo();
+    state.arcLen = 0;
+    state.axleTrail = [];
+    state.axleHeightHistory = [];
+    state.playing = false;
+    btnPlay.textContent = '▶';
+    btnPlay.classList.remove('active');
+    lastTime = null;
+
+    state.pocPhase = 'predict';
+    state.showAxleTrail = false;
+    state.trailRevealed = false;
+    btnTrail.classList.remove('on');
+
+    updateEduNote();
+});
+
+sliderN.addEventListener('input', (e) => {
+    ensureNotDemo();
+    const newN = parseInt(e.target.value);
+    document.getElementById('valN').textContent = newN;
+    state.n = newN;
+    state.s = 2 * state.R_fixed * Math.sin(Math.PI / newN);  // R 고정 → s 역산
+    state.params = computeRoadParams(newN, state.s);
+    rebuildArcTables(state.params);
+    state.arcLen = 0;
+    state.axleTrail = [];
+    state.axleHeightHistory = [];
+    lastTime = null;
+
+    state.sliderTouched = true;
+
+    if (state.n3StopTimer) { clearTimeout(state.n3StopTimer); state.n3StopTimer = null; }
+    state.n3Stopped = false;
+
+    state.playing = true;
+    state.n3Stopped = false;
+    btnPlay.textContent = '⏸';
+    btnPlay.classList.add('active');
+
+    state.showAxleTrail = true;
+    btnTrail.classList.add('on');
+
+    showLevel2UI();
+
+    updateEduNote();
+});
+
+btnFlat.addEventListener('click', () => {
+    ensureNotDemo();
+
+    if (!state.flatRoad && state.trailRevealed) {
+        const noteEl = document.getElementById('eduNote');
+        noteEl.className = 'note-question';
+        noteEl.textContent = EDU_SEQUENCES.flat_prompt.text;
+        setTimeout(() => {
+            doFlatToggle();
+        }, 1200);
+        return;
+    }
+    doFlatToggle();
+});
+
+function doFlatToggle() {
+    state.flatRoad = !state.flatRoad;
+    btnFlat.classList.toggle('on', state.flatRoad);
+    btnFlat.textContent = state.flatRoad ? '🔄 현수선도로' : '🔄 평평한도로';
+    state.arcLen = 0;
+    state.axleTrail = [];
+    state.axleHeightHistory = [];
+    state.playing = false;
+    btnPlay.textContent = '▶';
+    btnPlay.classList.remove('active');
+    lastTime = null;
+
+    if (state.flatRoad) {
+        state.showAxleTrail = true;
+        btnTrail.classList.add('on');
+        setRoadType('catenary');
+    }
+
+    updateEduNote();
+}
+
+btnTrail.addEventListener('click', () => {
+    ensureNotDemo();
+    state.showAxleTrail = !state.showAxleTrail;
+    btnTrail.classList.toggle('on', state.showAxleTrail);
+    if (!state.showAxleTrail) state.axleTrail = [];
+});
+
+btnContact.addEventListener('click', () => {
+    state.showContactPoint = !state.showContactPoint;
+    btnContact.classList.toggle('on', state.showContactPoint);
+});
+
+
+// ═══ n=3 봉착 후 복귀 경로 ═══
+
+function recoverFromN3() {
+    if (state.n3StopTimer) { clearTimeout(state.n3StopTimer); state.n3StopTimer = null; }
+    state.n3Stopped = false;
+    state.n = 4;
+    state.s = 2 * state.R_fixed * Math.sin(Math.PI / 4);  // R 고정 → s 역산
+    state.params = computeRoadParams(4, state.s);
+    rebuildArcTables(state.params);
+    sliderN.value = 4;
+    document.getElementById('valN').textContent = '4';
+    state.arcLen = 0;
+    state.axleTrail = [];
+    state.axleHeightHistory = [];
+    state.playing = true;
+    state.showAxleTrail = true;
+    btnPlay.textContent = '⏸';
+    btnPlay.classList.add('active');
+    btnTrail.classList.add('on');
+    lastTime = null;
+    updateEduNote();
+}
+
+document.getElementById('btnRecoverN4').addEventListener('click', () => {
+    recoverFromN3();
+});
+
+
+// ═══ Phase 4: Level 2 도로 비교 모드 ═══
+
+function showLevel2UI() {
+    const section = document.getElementById('roadShapeSection');
+    if (!section.classList.contains('visible')) {
+        section.classList.add('visible');
+        state.level2Active = true;
+    }
+}
+
+function setRoadType(type) {
+    if (state.axleHeightHistory.length > 10 && type !== state.roadType) {
+        state.ghostHistory = [...state.axleHeightHistory];
+        state.ghostRoadType = state.roadType;
+    }
+    state.roadType = type;
+
+    document.querySelectorAll('.rsbtn').forEach(btn => {
+        const rd = btn.dataset.road;
+        btn.classList.remove('active', 'alt-active');
+        if (rd === type) {
+            btn.classList.add('active');
+            if (type !== 'catenary') btn.classList.add('alt-active');
+        }
+    });
+}
+
+document.querySelectorAll('.rsbtn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        ensureNotDemo();
+        const type = btn.dataset.road;
+        if (type === state.roadType) return;
+
+        if (state.flatRoad) {
+            state.flatRoad = false;
+            btnFlat.classList.remove('on');
+            btnFlat.textContent = '🔄 평평한도로';
+        }
+
+        setRoadType(type);
+        state.roadShapeTouched = true;
+
+        state.arcLen = 0;
+        state.axleTrail = [];
+        state.axleHeightHistory = [];
+        state.playing = true;
+        state.showAxleTrail = true;
+        btnPlay.textContent = '⏸';
+        btnPlay.classList.add('active');
+        btnTrail.classList.add('on');
+        lastTime = null;
+
+        if (type === 'catenary' && state.roadShapeTouched && state.ghostHistory) {
+            state.catenaryDiscovered = true;
+        }
+
+        updateEduNote();
+    });
+});
+
+
+// ═══ 초기화 ═══
+
+state.demoMode = false;
+state.playing = false;
+state.showAxleTrail = false;
+state.pocPhase = 'predict';
+updateEduNote();
+
+window.addEventListener('load', () => {
+    updateEduNote();
+});
+</script>
+</body>
+</html>
